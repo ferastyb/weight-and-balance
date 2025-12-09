@@ -444,7 +444,7 @@ with dcol2:
     registration = st.text_input("Registration", value="")
     msn = st.text_input("MSN", value="")
 with dcol3:
-    weighing_place = st.text_input("Weighing place", value="")
+    weighing_place = st.text_input("Weighing location", value="")
     scales_cal_date = st.text_input("Scales calibration date", value="")
     weighing_date = st.text_input("Weighing date", value=datetime.now().strftime("%Y-%m-%d"))
 
