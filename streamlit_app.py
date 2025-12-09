@@ -269,7 +269,7 @@ def build_pdf_report(
     draw_detail("Aircraft Type", aircraft_type or "-")
     draw_detail("Registration", registration or "-")
     draw_detail("MSN", msn or "-")
-    draw_detail("Weighing Place", weighing_place or "-")
+    draw_detail("Weighing Location", weighing_place or "-")
     draw_detail("Weighing Date", weighing_date or "-")
     draw_detail("Scales Calibration Date", scales_cal_date or "-")
 
