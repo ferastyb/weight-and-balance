@@ -335,7 +335,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Boeing 787 Weighing – Centre of Gravity Calculator")
+st.title("Boeing 7x7 Weighing – Centre of Gravity Calculator")
 
 st.markdown(
     """
@@ -372,7 +372,7 @@ with st.sidebar:
         """
         **Reminder**  
         • Use arms from the *same datum*  
-        • Use official B787 WBM data for arms, LEMAC & MAC  
+        • Use official B7x7 WBM data for arms, LEMAC & MAC  
         """
     )
 
