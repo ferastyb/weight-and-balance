@@ -3,6 +3,11 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Optional, List
 
+# ---------- Logo & Website Header ----------
+
+LOGO_URL = "https://www.ferasaviation.info/gallery/FA__logo.png?ts=1754692591"
+WEBSITE_URL = "https://www.ferasaviation.info"
+
 
 # ---------- Core data structures & logic ----------
 
@@ -159,7 +164,26 @@ and display a simple 2D aircraft diagram with CG.
 """
 )
 
+# Sidebar: logo, link, units
 with st.sidebar:
+    # Logo from your website
+    st.image(LOGO_URL, use_column_width=True)
+
+    # Website link
+    st.markdown(
+        f"""
+        <div style='text-align: center; margin-top: 10px;'>
+            <a href='{WEBSITE_URL}' target='_blank'
+               style='text-decoration: none; font-size: 16px;'>
+                🌐 Visit Our Website
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown("---")
+
     st.header("Units & Info")
     weight_unit = st.selectbox("Weight unit", ["kg", "lb"], index=0)
     arm_unit = st.selectbox("Arm / distance unit", ["in", "m"], index=0)
