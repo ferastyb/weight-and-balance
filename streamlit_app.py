@@ -275,9 +275,10 @@ def draw_symmetry_chart(left_weight: float, right_weight: float):
     ax.grid(axis="y", linestyle="--", linewidth=0.5)
 
     diff = right_weight - left_weight
-    ax.text(0.5, max(values) * 1.02 if max(values) > 0 else 0,
-            f"Δ (Right - Left): {diff:,.1f}",
-            ha="center", va="bottom", fontsize=8)
+    if max(values) > 0:
+        ax.text(0.5, max(values) * 1.02,
+                f"Δ (Right - Left): {diff:,.1f}",
+                ha="center", va="bottom", fontsize=8)
     return fig
 
 
@@ -352,12 +353,13 @@ def build_pdf_report(
 ) -> BytesIO:
     """
     Build a PDF weight & balance report and return it as an in-memory buffer.
-    Page 1: logo, details, summary, gear data, adjustments, CG diagrams.
-    Page 2: additional charts (gear load, moment vs arm, symmetry, history) if available.
+    Page 1: logo, details, summary, gear data, adjustments, CG side-view.
+    Page 2: CG envelope + additional charts (gear load, moment vs arm, symmetry, history) if available.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
     from reportlab.lib.utils import ImageReader
+    from reportlab.lib import colors
     import requests
 
     buffer = BytesIO()
@@ -460,6 +462,22 @@ def build_pdf_report(
 
     corrected_mac_percent = final_mac_percent
 
+    # Envelope validity and status for corrected CG
+    envelope_valid = (
+        env_min_weight > 0
+        and env_max_weight > env_min_weight
+        and env_aft_limit > env_fwd_limit
+        and corrected_mac_percent is not None
+        and corrected_weight > 0
+    )
+
+    inside_envelope = False
+    if envelope_valid:
+        inside_envelope = (
+            env_min_weight <= corrected_weight <= env_max_weight and
+            env_fwd_limit <= corrected_mac_percent <= env_aft_limit
+        )
+
     # --- Summary ---
     c.setFont("Helvetica-Bold", 12)
     c.drawString(margin_x, y, "Summary")
@@ -491,6 +509,28 @@ def build_pdf_report(
 
     if corrected_mac_percent is not None:
         c.drawString(margin_x, y, f"Final CG position: {corrected_mac_percent:.2f} % MAC")
+        y -= 14
+    else:
+        y -= 8
+
+    # Envelope status text (in colour)
+    if envelope_valid:
+        c.setFont("Helvetica-Bold", 10)
+        if inside_envelope:
+            c.setFillColor(colors.green)
+            c.drawString(
+                margin_x,
+                y,
+                "Envelope status: Corrected CG is within the defined CG envelope."
+            )
+        else:
+            c.setFillColor(colors.red)
+            c.drawString(
+                margin_x,
+                y,
+                "Envelope status: Corrected CG is OUTSIDE the defined CG envelope – CHECK AGAINST APPROVED DATA."
+            )
+        c.setFillColor(colors.black)
         y -= 16
     else:
         y -= 8
@@ -621,36 +661,6 @@ def build_pdf_report(
     else:
         y -= 10
 
-    # --- CG Envelope diagram (if available, still on page 1) ---
-    if cg_envelope_png is not None and y > 150:
-        img = ImageReader(cg_envelope_png)
-        img_width_px, img_height_px = img.getSize()
-
-        max_width = width - 2 * margin_x
-        max_height = max(y - 120, 60)
-
-        scale = min(max_width / img_width_px, max_height / img_height_px)
-        draw_width = img_width_px * scale
-        draw_height = img_height_px * scale
-
-        x_pos = (width - draw_width) / 2
-        y_pos = max(y - draw_height, 120)
-
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(margin_x, y, "CG Envelope (Weight vs %MAC)")
-        c.drawImage(
-            img,
-            x_pos,
-            y_pos,
-            width=draw_width,
-            height=draw_height,
-            preserveAspectRatio=True,
-            mask='auto'
-        )
-        y = y_pos - 10
-    else:
-        y -= 10
-
     # --- Configuration / Notes ---
     if config_notes:
         c.setFont("Helvetica-Bold", 10)
@@ -709,9 +719,10 @@ def build_pdf_report(
     # Finalise page 1
     c.showPage()
 
-    # ---------- Page 2: Additional Analysis Charts ----------
+    # ---------- Page 2: CG envelope + Additional Analysis Charts ----------
 
     have_extra_charts = any([
+        cg_envelope_png is not None,
         gear_load_png is not None,
         moment_arm_png is not None,
         symmetry_png is not None,
@@ -729,10 +740,9 @@ def build_pdf_report(
         def draw_chart_block(title: str, img_buf: BytesIO, y_start: float) -> float:
             if img_buf is None:
                 return y_start
-            nonlocal c
-            nonlocal width, height, margin_x
+            nonlocal c, width, height, margin_x
             y = y_start
-            if y < 150:  # new page if not enough space
+            if y < 200:  # new page if not enough space
                 c.showPage()
                 y = height - 60
                 c.setFont("Helvetica-Bold", 14)
@@ -745,7 +755,7 @@ def build_pdf_report(
             img = ImageReader(img_buf)
             img_width_px, img_height_px = img.getSize()
             max_width = width - 2 * margin_x
-            max_height = 200
+            max_height = 260  # give more height for readability
             scale = min(max_width / img_width_px, max_height / img_height_px)
             draw_width = img_width_px * scale
             draw_height = img_height_px * scale
@@ -762,6 +772,10 @@ def build_pdf_report(
             )
             return y_pos - 24
 
+        # First: CG envelope (bigger and clearer here)
+        if cg_envelope_png is not None:
+            y = draw_chart_block("CG Envelope (Weight vs %MAC)", cg_envelope_png, y)
+        # Then other charts
         if gear_load_png is not None:
             y = draw_chart_block("Gear Load Distribution", gear_load_png, y)
         if moment_arm_png is not None:
@@ -795,6 +809,7 @@ Enter your **scale readings**, **arms from datum**, aircraft details, envelope l
 The app will:
 - Compute **as-weighed** and **corrected** weight & CG  
 - Show **side-view CG**, **CG envelope**, **gear load**, **moment vs arm**, **lateral symmetry**, and **CG history** (if provided)  
+- Check whether the **corrected CG** is **inside** or **outside** the defined envelope  
 - Generate a comprehensive **PDF report** (with diagrams and sign-off)
     
 > Presets and envelope limits are for **demo / engineering support** only – always verify against your approved W&B data.
@@ -1203,6 +1218,21 @@ if calculate:
         if lemac_arm is not None and mac_length is not None and mac_length > 0 and corrected_weight > 0:
             corrected_mac_percent = (corrected_cg - lemac_arm) / mac_length * 100.0
 
+        # Envelope validity & status (for UI)
+        envelope_valid = (
+            env_min_weight > 0
+            and env_max_weight > env_min_weight
+            and env_aft_limit > env_fwd_limit
+            and corrected_mac_percent is not None
+            and corrected_weight > 0
+        )
+        inside_envelope = False
+        if envelope_valid:
+            inside_envelope = (
+                env_min_weight <= corrected_weight <= env_max_weight and
+                env_fwd_limit <= corrected_mac_percent <= env_aft_limit
+            )
+
         res_col1, res_col2 = st.columns([1, 1.5])
 
         cg_buffer = None
@@ -1227,7 +1257,7 @@ if calculate:
             fig_side.savefig(cg_buffer, format="png", bbox_inches="tight")
             cg_buffer.seek(0)
 
-            # CG Envelope
+            # CG Envelope (UI)
             if (
                 env_min_weight > 0
                 and env_max_weight > env_min_weight
@@ -1329,6 +1359,13 @@ if calculate:
                     value=f"{corrected_mac_percent:.2f} %"
                 )
                 st.caption("Check against your approved CG envelope for this aircraft type.")
+
+            # Envelope status (UI)
+            if envelope_valid:
+                if inside_envelope:
+                    st.success("Envelope status: Corrected CG is **within** the defined CG envelope.")
+                else:
+                    st.error("Envelope status: Corrected CG is **outside** the defined CG envelope – check against approved data.")
 
             st.markdown("### Weighing Moments")
             st.table({
