@@ -280,7 +280,7 @@ def build_pdf_report(
     draw_detail("Aircraft Type", aircraft_type or "-")
     draw_detail("Registration", registration or "-")
     draw_detail("MSN", msn or "-")
-    draw_detail("Weighing Place", weighing_place or "-")
+    draw_detail("Weighing Location", weighing_place or "-")
     draw_detail("Weighing Date", weighing_date or "-")
     draw_detail("Scales Calibration Date", scales_cal_date or "-")
     draw_detail("WBM reference", wbm_reference or "-")
@@ -622,7 +622,7 @@ with dcol2:
     registration = st.text_input("Registration", value="")
     msn = st.text_input("MSN", value="")
 with dcol3:
-    weighing_place = st.text_input("Weighing place", value="")
+    weighing_place = st.text_input("Weighing location", value="")
     scales_cal_date = st.text_input("Scales calibration date", value="")
     weighing_date = st.text_input("Weighing date", value=datetime.now().strftime("%Y-%m-%d"))
 
