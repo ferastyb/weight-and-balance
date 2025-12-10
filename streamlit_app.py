@@ -176,6 +176,57 @@ def draw_aircraft_diagram(
     return fig
 
 
+def draw_cg_envelope_plot(
+    min_weight: float,
+    max_weight: float,
+    fwd_limit: float,
+    aft_limit: float,
+    as_w: float,
+    as_mac: Optional[float],
+    corrected_w: float,
+    corrected_mac: Optional[float],
+):
+    """
+    Draw a CG envelope diagram: Weight vs %MAC with a simple rectangular envelope.
+    Plots as-weighed and corrected CG points if %MAC values are provided.
+    """
+    if min_weight <= 0 or max_weight <= min_weight or aft_limit <= fwd_limit:
+        raise ValueError("Invalid CG envelope limits.")
+
+    fig, ax = plt.subplots(figsize=(4, 4))
+
+    # Envelope rectangle
+    env_x = [fwd_limit, fwd_limit, aft_limit, aft_limit, fwd_limit]
+    env_y = [min_weight, max_weight, max_weight, min_weight, min_weight]
+    ax.plot(env_x, env_y, linestyle="-")
+    ax.fill(env_x, env_y, alpha=0.1)
+
+    # As-weighed point
+    if as_mac is not None and as_w > 0:
+        ax.scatter([as_mac], [as_w], marker="x")
+        ax.text(as_mac, as_w, " As-weighed", fontsize=8, va="bottom", ha="left")
+
+    # Corrected point
+    if corrected_mac is not None and corrected_w > 0:
+        ax.scatter([corrected_mac], [corrected_w], marker="o")
+        ax.text(corrected_mac, corrected_w, " Corrected", fontsize=8, va="top", ha="left")
+
+    ax.set_xlabel("% MAC")
+    ax.set_ylabel("Weight")
+    ax.set_title("CG Envelope")
+
+    # Sensible x/y limits padding
+    x_min = min(fwd_limit, aft_limit) - 2
+    x_max = max(fwd_limit, aft_limit) + 2
+    ax.set_xlim(x_min, x_max)
+
+    y_pad = 0.05 * (max_weight - min_weight)
+    ax.set_ylim(min_weight - y_pad, max_weight + y_pad)
+
+    ax.grid(True, linestyle="--", linewidth=0.5)
+    return fig
+
+
 # ---------- PDF report generation ----------
 
 def build_pdf_report(
@@ -207,13 +258,20 @@ def build_pdf_report(
     approved_by: str,
     approved_by_date: str,
     config_notes: str,
-    # CG diagram image buffer:
+    # CG envelope:
+    env_min_weight: float,
+    env_max_weight: float,
+    env_fwd_limit: float,
+    env_aft_limit: float,
+    final_mac_percent: Optional[float],
+    # CG diagrams:
     cg_diagram_png: Optional[BytesIO] = None,
+    cg_envelope_png: Optional[BytesIO] = None,
 ) -> BytesIO:
     """
     Build a PDF weight & balance report and return it as an in-memory buffer.
     Includes logo, aircraft details, weighing data, CG diagram on the same page,
-    adjustments, notes, and signature blocks.
+    CG envelope plot, adjustments, notes, and signature blocks.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
@@ -271,7 +329,6 @@ def build_pdf_report(
 
     c.setFont("Helvetica", 10)
 
-    # Details to be laid out in 2 columns
     details = [
         ("Operator", operator or "-"),
         ("Aircraft Type", aircraft_type or "-"),
@@ -320,12 +377,9 @@ def build_pdf_report(
 
     corrected_weight = as_w - sum_sub_w + sum_add_w
     corrected_moment = pitch_corrected_m - sum_sub_m + sum_add_m
-
     corrected_cg = corrected_moment / corrected_weight if corrected_weight > 0 else as_cg
 
-    corrected_mac_percent = None
-    if lemac_arm is not None and mac_length is not None and mac_length > 0:
-        corrected_mac_percent = (corrected_cg - lemac_arm) / mac_length * 100.0
+    corrected_mac_percent = final_mac_percent
 
     # --- Summary ---
     c.setFont("Helvetica-Bold", 12)
@@ -458,14 +512,45 @@ def build_pdf_report(
 
     y -= 10
 
-    # --- CG diagram on same page (if provided) ---
+    # --- CG diagram on same page (side view) ---
     if cg_diagram_png is not None:
         from reportlab.lib.utils import ImageReader
         img = ImageReader(cg_diagram_png)
         img_width_px, img_height_px = img.getSize()
 
         max_width = width - 2 * margin_x
-        # Reserve some space at the bottom (~80) for signatures & cert
+        # Reserve some space at the bottom for envelope + signatures
+        max_height = max(y - 180, 60)
+
+        scale = min(max_width / img_width_px, max_height / img_height_px)
+        draw_width = img_width_px * scale
+        draw_height = img_height_px * scale
+
+        x_pos = (width - draw_width) / 2
+        y_pos = max(y - draw_height, 200)
+
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin_x, y, "CG Diagram (Side View)")
+        c.drawImage(
+            img,
+            x_pos,
+            y_pos,
+            width=draw_width,
+            height=draw_height,
+            preserveAspectRatio=True,
+            mask='auto'
+        )
+        y = y_pos - 10
+    else:
+        y -= 10
+
+    # --- CG Envelope diagram (Weight vs %MAC) ---
+    if cg_envelope_png is not None and y > 150:
+        from reportlab.lib.utils import ImageReader
+        img = ImageReader(cg_envelope_png)
+        img_width_px, img_height_px = img.getSize()
+
+        max_width = width - 2 * margin_x
         max_height = max(y - 120, 60)
 
         scale = min(max_width / img_width_px, max_height / img_height_px)
@@ -476,7 +561,7 @@ def build_pdf_report(
         y_pos = max(y - draw_height, 120)
 
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(margin_x, y, "CG Diagram")
+        c.drawString(margin_x, y, "CG Envelope (Weight vs %MAC)")
         c.drawImage(
             img,
             x_pos,
@@ -497,7 +582,6 @@ def build_pdf_report(
         y -= 12
         c.setFont("Helvetica", 9)
 
-        # Simple line wrapping for notes
         max_chars = 90
         notes_lines = []
         for line in config_notes.split("\n"):
@@ -564,9 +648,9 @@ st.title("Boeing 7x7 Weighing – Centre of Gravity Calculator")
 
 st.markdown(
     """
-Enter your **scale readings**, **arms from datum**, aircraft details, and adjustments.  
-The app will compute as-weighed and corrected weight & CG, display a 2D diagram, and
-generate a comprehensive PDF Weight & Balance report (with CG diagram and sign-off on page 1).
+Enter your **scale readings**, **arms from datum**, aircraft details, envelope limits, and adjustments.  
+The app computes as-weighed and corrected weight & CG, shows a side-view diagram and a CG envelope plot,
+and generates a comprehensive PDF Weight & Balance report (with diagrams and sign-off on page 1).
 
 > Presets are for engineering support only – always verify against your approved W&B data.
 """
@@ -785,6 +869,47 @@ with col4:
 
 st.markdown("---")
 
+# ---------- CG Envelope Limits (for plot) ----------
+
+st.subheader("CG Envelope Limits (for Weight vs %MAC plot) – optional")
+
+env_col1, env_col2 = st.columns(2)
+with env_col1:
+    env_min_weight = st.number_input(
+        f"Envelope minimum weight ({weight_unit})",
+        min_value=0.0,
+        value=0.0,
+        step=1000.0,
+        help="Lowest weight for the CG envelope. Leave as 0 if not used."
+    )
+    env_fwd_limit = st.number_input(
+        "Forward CG limit (% MAC)",
+        value=0.0,
+        step=0.1,
+        help="Forward limit of CG envelope in %MAC. Must be less than aft limit."
+    )
+with env_col2:
+    env_max_weight = st.number_input(
+        f"Envelope maximum weight ({weight_unit})",
+        min_value=0.0,
+        value=0.0,
+        step=1000.0,
+        help="Highest weight for the CG envelope."
+    )
+    env_aft_limit = st.number_input(
+        "Aft CG limit (% MAC)",
+        value=0.0,
+        step=0.1,
+        help="Aft limit of CG envelope in %MAC."
+    )
+
+st.caption(
+    "If envelope limits are left as zero or invalid (min >= max, fwd >= aft), "
+    "the CG envelope plot will be skipped."
+)
+
+st.markdown("---")
+
 # ---------- Pitch & Adjustments ----------
 
 st.subheader("Pitch & Adjustments")
@@ -894,11 +1019,19 @@ if calculate:
         corrected_moment = pitch_corrected_m - sum_sub_m + sum_add_m
         corrected_cg = corrected_moment / corrected_weight if corrected_weight > 0 else as_cg
 
+        # As-weighed & corrected %MAC
+        as_mac_percent = None
+        if lemac_arm is not None and mac_length is not None and mac_length > 0:
+            as_mac_percent = (as_cg - lemac_arm) / mac_length * 100.0
+
         corrected_mac_percent = None
         if lemac_arm is not None and mac_length is not None and mac_length > 0 and corrected_weight > 0:
             corrected_mac_percent = (corrected_cg - lemac_arm) / mac_length * 100.0
 
-        res_col1, res_col2 = st.columns([1, 1.2])
+        res_col1, res_col2 = st.columns([1, 1.3])
+
+        cg_buffer = None
+        env_buffer = None
 
         with res_col2:
             st.markdown("## Aircraft CG Diagram (Side View)")
@@ -911,10 +1044,35 @@ if calculate:
             )
             st.pyplot(fig)
 
-            # Save CG diagram to PNG in memory for PDF
             cg_buffer = BytesIO()
             fig.savefig(cg_buffer, format="png", bbox_inches="tight")
             cg_buffer.seek(0)
+
+            # CG Envelope plot (if limits are valid and %MAC available)
+            if (
+                env_min_weight > 0
+                and env_max_weight > env_min_weight
+                and env_aft_limit > env_fwd_limit
+                and (as_mac_percent is not None or corrected_mac_percent is not None)
+            ):
+                st.markdown("## CG Envelope (Weight vs %MAC)")
+                fig_env = draw_cg_envelope_plot(
+                    min_weight=env_min_weight,
+                    max_weight=env_max_weight,
+                    fwd_limit=env_fwd_limit,
+                    aft_limit=env_aft_limit,
+                    as_w=as_w,
+                    as_mac=as_mac_percent,
+                    corrected_w=corrected_weight,
+                    corrected_mac=corrected_mac_percent,
+                )
+                st.pyplot(fig_env)
+
+                env_buffer = BytesIO()
+                fig_env.savefig(env_buffer, format="png", bbox_inches="tight")
+                env_buffer.seek(0)
+            else:
+                st.info("CG envelope plot not generated – check envelope limits and MAC inputs if you want this diagram.")
 
         with res_col1:
             st.markdown("## Results")
@@ -937,10 +1095,10 @@ if calculate:
                 value=f"{corrected_cg:.2f}"
             )
 
-            if result.mac_percent is not None:
+            if as_mac_percent is not None:
                 st.metric(
                     label="As-weighed CG (% MAC)",
-                    value=f"{result.mac_percent:.2f} %"
+                    value=f"{as_mac_percent:.2f} %"
                 )
 
             if corrected_mac_percent is not None:
@@ -950,7 +1108,6 @@ if calculate:
                 )
                 st.caption("Check against your approved CG envelope for this aircraft type.")
 
-            # Show a small table of moments for traceability
             st.markdown("### Weighing Moments")
             st.table({
                 "Point": [p.name for p in points],
@@ -960,7 +1117,6 @@ if calculate:
                 "Moment": [p.weight * p.arm for p in points],
             })
 
-            # Show totals for adjustments
             if subtractions or additions or pitch_correction:
                 st.markdown("### Adjustments Summary")
                 st.write(f"Total subtractions: {sum_sub_w:,.1f} {weight_unit}")
@@ -996,7 +1152,13 @@ if calculate:
                 approved_by=approved_by,
                 approved_by_date=approved_by_date,
                 config_notes=config_notes,
+                env_min_weight=env_min_weight,
+                env_max_weight=env_max_weight,
+                env_fwd_limit=env_fwd_limit,
+                env_aft_limit=env_aft_limit,
+                final_mac_percent=corrected_mac_percent,
                 cg_diagram_png=cg_buffer,
+                cg_envelope_png=env_buffer,
             )
 
             st.download_button(
@@ -1009,4 +1171,4 @@ if calculate:
     except Exception as e:
         st.error(f"Error during calculation: {e}")
 else:
-    st.info("Select aircraft type, enter aircraft details, weighing data, adjustments, then click **Calculate CG**.")
+    st.info("Select aircraft type, enter aircraft details, weighing data, envelope limits, and adjustments, then click **Calculate CG**.")
