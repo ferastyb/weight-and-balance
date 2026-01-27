@@ -9,4 +9,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Curl Streamlit App
-        run: curl -s https://weight-and-balance.streamlit.app/ > /dev/null
+        run: curl -s ttps://weight-and-balance.streamlit.app/ > /dev/null
